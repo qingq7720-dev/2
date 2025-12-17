@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手势交互粒子宇宙</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Inter', sans-serif; }
+        canvas { display: block; }
+        
+        /* 隐藏视频输入元素，我们只需要数据 */
+        .input_video { display: none; }
+        
+        /* 自定义滚动条 */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1a1a; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+        .glass-panel {
+            background: rgba(20, 20, 35, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease;
+        }
+        
+        .spinner {
+            width: 50px; height: 50px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <!-- 加载遮罩 -->
+    <div id="loading" class="loading-overlay">
+        <div class="spinner mb-4"></div>
+        <div class="text-white text-lg font-light tracking-widest">初始化视觉系统...</div>
+        <div class="text-gray-500 text-sm mt-2">请允许摄像头权限以启用手势控制</div>
+    </div>
+
+    <!-- 用于MediaPipe的视频输入 -->
+    <video class="input_video"></video>
+
+    <!-- UI 控制面板 -->
+    <div class="fixed top-6 left-6 w-72 glass-panel rounded-2xl p-6 text-white z-50 transition-all duration-300 hover:bg-opacity-90">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-red-400 to-pink-500">
+                粒子控制器
+            </h1>
+            <!-- 手势追踪状态灯 -->
+            <div id="hand-status" class="w-3 h-3 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.6)]" title="手势追踪状态"></div>
+        </div>
+
+        <div class="space-y-5">
+            <!-- 模式选择 -->
+            <div>
+                <label class="text-xs text-gray-400 uppercase tracking-widest mb-2 block">模型预设</label>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="switchMode('starfield')" class="mode-btn py-2 px-4 rounded-lg bg-white/10 hover:bg-red-500/20 hover:text-red-300 transition text-sm font-medium border border-white/5 focus:outline-none focus:ring-2 focus:ring-red-500 active-mode" id="btn-starfield">
+                        ❤️ 星云之心
+                    </button>
+                    <button onclick="switchMode('saturn')" class="mode-btn py-2 px-4 rounded-lg bg-white/10 hover:bg-purple-500/20 hover:text-purple-300 transition text-sm font-medium border border-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500" id="btn-saturn">
+                        💖 土星之恋
+                    </button>
+                </div>
+            </div>
+
+            <!-- 颜色控制 -->
+            <div>
+                <label class="text-xs text-gray-400 uppercase tracking-widest mb-2 block">粒子核心色</label>
+                <div class="flex items-center space-x-3 bg-white/5 p-2 rounded-lg">
+                    <input type="color" id="colorPicker" value="#ff0000" class="w-8 h-8 rounded cursor-pointer border-none bg-transparent">
+                    <span class="text-sm font-mono text-gray-300" id="colorValue">#FF0000</span>
+                </div>
+            </div>
+
+            <!-- 说明 -->
+            <div class="pt-4 border-t border-white/10">
+                <div class="flex items-start space-x-3 text-sm text-gray-400">
+                    <span class="text-lg">👋</span>
+                    <p class="leading-relaxed">
+                        在摄像头前举起一只或两只手。<br>
+                        <span class="text-white">捏合手指</span> = 聚合模型<br>
+                        <span class="text-white">张开五指</span> = 粒子爆炸<br>
+                        <span class="text-white">左右移动手</span> = 旋转模型<br>
+                        <span class="text-pink-300">完全张开手指 2 秒</span> = 出现 I LOVE YOU<br>
+                        <span class="text-pink-300">双手同时捏合</span> = 退出 I LOVE YOU 模式
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全屏按钮 (增强版) -->
+    <button id="fullscreen-btn" onclick="toggleFullScreen()" class="fixed bottom-6 right-6 p-4 glass-panel rounded-full text-white hover:bg-white/20 hover:scale-105 transition-all duration-200 z-50 group shadow-lg" title="切换全屏">
+        <!-- 正常全屏图标 -->
+        <svg id="icon-enter" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 group-hover:text-red-300 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+        </svg>
+        <!-- 退出全屏图标 (默认隐藏) -->
+        <svg id="icon-exit" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 hidden group-hover:text-red-300 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14H6m0 0v4m0-4l5 5m8-5h4m-4 0v4m0-4l-5 5M14 10h4m0 0V6m0 0l-5 5M10 10H6m0 0V6m0 0l5 5" />
+        </svg>
+    </button>
+
+    <!-- 交互提示反馈 -->
+    <div id="gesture-feedback" class="fixed bottom-10 left-1/2 transform -translate-x-1/2 text-white/50 text-sm font-mono tracking-widest pointer-events-none transition-opacity duration-300 opacity-0">
+        扩散系数: <span id="diffusion-val">0%</span>
+    </div>
+    
+    <!-- 文字模式倒计时反馈 (新增) -->
+    <div id="text-countdown" class="fixed bottom-24 left-1/2 transform -translate-x-1/2 text-pink-400 text-xl font-bold tracking-widest pointer-events-none transition-opacity duration-300 opacity-0">
+        正在计时...
+    </div>
+
+
+    <script>
+        // --- 全局配置 ---
+        const CONFIG = {
+            particleCount: 6000,
+            baseColor: 0xff0000, // 默认改为红色
+            particleSize: 0.3, // 增加尺寸让心形更清晰
+            lerpSpeed: 0.08, // 模型变换速度
+            handSensitivity: 2.0, // 手势敏感度
+            textDelayDuration: 2000, // 2秒
+            maxExpansionThreshold: 0.95, // 触发 I LOVE YOU 的最小扩张程度
+            exitTextThreshold: 0.1, // 退出 I LOVE YOU 模式的最大扩张程度 (现在需要非常小，表示捏合)
+        };
+        const BACKGROUND_STAR_COUNT = 5000; // 背景星空粒子数量
+
+        // --- Three.js 变量 ---
+        let scene, camera, renderer, particles, geometry;
+        let material;
+        let backgroundStars; 
+        let animationId;
+        
+        // 粒子目标位置存储
+        const positionsStarfield = new Float32Array(CONFIG.particleCount * 3);
+        const positionsSaturn = new Float32Array(CONFIG.particleCount * 3);
+        const positionsILoveYou = new Float32Array(CONFIG.particleCount * 3); 
+        
+        // 状态
+        let targetMode = 'starfield'; 
+        let originalMode = 'starfield'; // 存储进入文字模式前的模式 (新增)
+        let handExpansionFactor = 0; // 0 = 正常, 1 = 最大扩散
+        let smoothedExpansion = 0;   // 用于平滑动画
+
+        // --- 手势交互旋转变量 ---
+        let lastHandX = null;        
+        let targetRotationY = 0;     
+        let rotationVelocity = 0;    
+        
+        // --- I LOVE YOU 模式状态 ---
+        let isMaxExpansion = false;
+        let maxExpansionStartTime = 0;
+        let isILoveYouMode = false;
+
+
+        // --- 1. Three.js 初始化 ---
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 30;
+            camera.position.y = 10;
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            // 生成心形粒子纹理 (发光点)
+            const heartSprite = getHeartTexture();
+
+            // 生成几何数据
+            generateStarfieldData();
+            generateSaturnData();
+            generateILoveYouData(); // 新增：生成 I LOVE YOU 文字数据
+
+            // 初始几何体
+            geometry = new THREE.BufferGeometry();
+            // 深度克隆一份数据作为起始点
+            geometry.setAttribute('position', new THREE.BufferAttribute(positionsStarfield.slice(), 3));
+            
+            // 颜色属性
+            const colors = new Float32Array(CONFIG.particleCount * 3);
+            for(let i=0; i<colors.length; i++) colors[i] = 1.0;
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            // 材质
+            material = new THREE.PointsMaterial({
+                size: CONFIG.particleSize,
+                map: heartSprite, 
+                color: CONFIG.baseColor,
+                transparent: true,
+                opacity: 0.9, 
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                vertexColors: true
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+
+            initBackgroundStars();
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            window.addEventListener('resize', onWindowResize, false);
+            animate();
+        }
+
+        // --- 2. 几何数据生成器与纹理 ---
+
+        // 辅助：生成心形纹理
+        function getHeartTexture() {
+            const size = 64; 
+            const canvas = document.createElement('canvas');
+            canvas.width = size; canvas.height = size;
+            const context = canvas.getContext('2d');
+            const center = size / 2;
+            const scaleFactor = 30; 
+
+            context.fillStyle = 'white';
+
+            context.save();
+            context.translate(center, center - scaleFactor * 0.1); 
+            context.scale(scaleFactor, -scaleFactor); 
+
+            context.beginPath();
+            context.moveTo(0, -1.0); 
+            context.bezierCurveTo(-1.0, 0.0, -0.5, 1.2, 0.0, 0.5); 
+            context.bezierCurveTo(0.5, 1.2, 1.0, 0.0, 0.0, -1.0);
+            context.closePath();
+            context.fill();
+            context.restore();
+
+            const texture = new THREE.Texture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+        
+        // 辅助：生成简单圆形纹理
+        function getCircleTexture() {
+            const size = 64; 
+            const canvas = document.createElement('canvas');
+            canvas.width = size; canvas.height = size;
+            const context = canvas.getContext('2d');
+            const center = size / 2;
+            const radius = size * 0.45;
+
+            context.beginPath();
+            context.arc(center, center, radius, 0, Math.PI * 2, false);
+            context.fillStyle = 'white';
+            context.fill();
+
+            const texture = new THREE.Texture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
+        // 模式A: 随机星云 (立方体空间内随机)
+        function generateStarfieldData() {
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                const i3 = i * 3;
+                positionsStarfield[i3] = (Math.random() - 0.5) * 60;
+                positionsStarfield[i3 + 1] = (Math.random() - 0.5) * 60;
+                positionsStarfield[i3 + 2] = (Math.random() - 0.5) * 60;
+            }
+        }
+
+        // 模式B: 土星 (球体 + 环)
+        function generateSaturnData() {
+            const sphereCount = Math.floor(CONFIG.particleCount * 0.4); 
+            const ringCount = CONFIG.particleCount - sphereCount;       
+
+            // 星球本体
+            for (let i = 0; i < sphereCount; i++) {
+                const i3 = i * 3;
+                const radius = 6;
+                const phi = Math.acos(-1 + (2 * i) / sphereCount);
+                const theta = Math.sqrt(sphereCount * Math.PI) * phi;
+                
+                positionsSaturn[i3] = radius * Math.cos(theta) * Math.sin(phi);
+                positionsSaturn[i3 + 1] = radius * Math.sin(theta) * Math.sin(phi);
+                positionsSaturn[i3 + 2] = radius * Math.cos(phi);
+            }
+
+            // 星环
+            for (let i = 0; i < ringCount; i++) {
+                const i3 = (sphereCount + i) * 3;
+                const distance = 8 + Math.random() * 10;
+                const angle = Math.random() * Math.PI * 2;
+                const thickness = (Math.random() - 0.5) * 0.5;
+
+                positionsSaturn[i3] = Math.cos(angle) * distance;
+                positionsSaturn[i3 + 1] = thickness + Math.sin(angle) * (distance * 0.1); 
+                positionsSaturn[i3 + 2] = Math.sin(angle) * distance;
+            }
+        }
+
+        // 模式C: I LOVE YOU (程序化生成块状文字) - NEW
+        function getLetterPoints(letter, offsetX, scale = 1.0) {
+            // 定义粒子在局部坐标系中的分布点
+            const points = [];
+            const size = 5 * scale;
+            const thickness = 1 * scale;
+            const halfSize = size / 2;
+            const halfThickness = thickness / 2;
+            const particleDensity = 40; 
+
+            // 简化坐标定义：[X_Center, Y_Center, Z_Center, Width, Height, Depth]
+            const letterMaps = {
+                // I
+                'I': [
+                    [0, 0, 0, thickness, size, thickness], 
+                ],
+                // L
+                'L': [
+                    [-halfSize, 0, 0, thickness, size, thickness], 
+                    [0, -halfSize, 0, size, thickness, thickness], 
+                ],
+                // O (Box outline approximation)
+                'O': [
+                    [0, halfSize, 0, size, thickness, thickness], 
+                    [0, -halfSize, 0, size, thickness, thickness],
+                    [halfSize, 0, 0, thickness, size, thickness],
+                    [-halfSize, 0, 0, thickness, size, thickness],
+                ],
+                // V (using two diagonal bars, approximation for simple block)
+                'V': [
+                    [-halfSize * 0.7, halfSize * 0.5, 0, thickness, size, thickness], 
+                    [halfSize * 0.7, halfSize * 0.5, 0, thickness, size, thickness], 
+                ],
+                // E
+                'E': [
+                    [-halfSize, 0, 0, thickness, size, thickness], 
+                    [0, halfSize, 0, size, thickness, thickness], 
+                    [0, 0, 0, size * 0.7, thickness, thickness], 
+                    [0, -halfSize, 0, size, thickness, thickness], 
+                ],
+                // Y (using two arms and stem)
+                'Y': [
+                    [-halfSize * 0.7, halfSize * 0.5, 0, thickness, size * 0.6, thickness], 
+                    [halfSize * 0.7, halfSize * 0.5, 0, thickness, size * 0.6, thickness], 
+                    [0, -halfSize * 0.7, 0, thickness, size * 0.6, thickness],
+                ],
+                // U
+                'U': [
+                    [-halfSize, 0, 0, thickness, size, thickness], 
+                    [halfSize, 0, 0, thickness, size, thickness], 
+                    [0, -halfSize, 0, size, thickness, thickness], 
+                ],
+                // Space
+                ' ': []
+            };
+
+            const map = letterMaps[letter];
+            if (!map) return points;
+
+            // 粒子填充逻辑
+            map.forEach(([cx, cy, cz, w, h, d]) => {
+                for (let i = 0; i < particleDensity; i++) {
+                    const x = cx + (Math.random() - 0.5) * w;
+                    const y = cy + (Math.random() - 0.5) * h;
+                    const z = cz + (Math.random() - 0.5) * d;
+                    
+                    // 加上文字块的整体偏移量
+                    points.push(x + offsetX, y, z);
+                }
+            });
+
+            return points;
+        }
+
+        function generateILoveYouData() {
+            const text = "I LOVE YOU";
+            const letters = text.split('');
+            const scaleFactor = 0.8; // 缩小文字大小 (从 1.5 降到 0.8)
+            const letterSpacing = 4.5 * scaleFactor; // 缩小字母间距
+            const totalLetters = letters.filter(l => l !== ' ').length;
+            const totalWidth = totalLetters * (letterSpacing * 1.5) ; // 粗略计算总宽度
+            let currentX = -(totalWidth / 2); // 从中心开始，向左偏移
+            const allTextPoints = [];
+
+            // 1. 生成所有字母的粒子点
+            letters.forEach(letter => {
+                // 如果是空格，只增加间距
+                if (letter === ' ') {
+                    currentX += letterSpacing * 0.5;
+                    return;
+                }
+                const letterPoints = getLetterPoints(letter, currentX, scaleFactor); 
+                allTextPoints.push(...letterPoints);
+                currentX += letterSpacing;
+            });
+            
+            // 2. 将生成的粒子点映射到总粒子数组
+            const numGeneratedPoints = allTextPoints.length / 3;
+            
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                const i3 = i * 3;
+                
+                if (numGeneratedPoints > 0) {
+                    const sourceIndex = (i % numGeneratedPoints) * 3;
+                    positionsILoveYou[i3] = allTextPoints[sourceIndex];
+                    positionsILoveYou[i3 + 1] = allTextPoints[sourceIndex + 1];
+                    positionsILoveYou[i3 + 2] = allTextPoints[sourceIndex + 2];
+                } else {
+                    positionsILoveYou[i3] = (Math.random() - 0.5) * 5;
+                    positionsILoveYou[i3 + 1] = (Math.random() - 0.5) * 5;
+                    positionsILoveYou[i3 + 2] = (Math.random() - 0.5) * 5;
+                }
+            }
+        }
+        
+        // 初始化背景星空
+        function initBackgroundStars() {
+            const backgroundGeometry = new THREE.BufferGeometry();
+            const backgroundPositions = new Float32Array(BACKGROUND_STAR_COUNT * 3);
+            const backgroundSprite = getCircleTexture();
+
+            for (let i = 0; i < BACKGROUND_STAR_COUNT; i++) {
+                const i3 = i * 3;
+                const distance = 100 + Math.random() * 50; 
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(Math.random() * 2 - 1); 
+
+                backgroundPositions[i3] = distance * Math.sin(phi) * Math.cos(theta);
+                backgroundPositions[i3 + 1] = distance * Math.sin(phi) * Math.sin(theta);
+                backgroundPositions[i3 + 2] = distance * Math.cos(phi);
+            }
+
+            backgroundGeometry.setAttribute('position', new THREE.BufferAttribute(backgroundPositions, 3));
+
+            const backgroundMaterial = new THREE.PointsMaterial({
+                size: 0.1, 
+                map: backgroundSprite,
+                color: 0xffffff,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                depthWrite: false, 
+                opacity: 0.8 
+            });
+
+            backgroundStars = new THREE.Points(backgroundGeometry, backgroundMaterial);
+            scene.add(backgroundStars);
+        }
+
+
+        // --- 3. 手势与动画逻辑 ---
+
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+
+            // 1. 旋转场景
+            if(particles) {
+                // 手势控制的 Y 轴旋转
+                rotationVelocity += (targetRotationY - particles.rotation.y) * 0.05; 
+                rotationVelocity *= 0.85; 
+                particles.rotation.y += rotationVelocity * 0.1; 
+
+                // Z 轴倾角
+                if(targetMode === 'saturn') {
+                    particles.rotation.z = THREE.MathUtils.lerp(particles.rotation.z, 0.4, 0.05);
+                } else {
+                    particles.rotation.z = THREE.MathUtils.lerp(particles.rotation.z, 0, 0.05);
+                }
+            }
+            
+            // 旋转背景星空
+            if(backgroundStars) {
+                backgroundStars.rotation.x += 0.0001;
+                backgroundStars.rotation.y += 0.00005;
+            }
+
+
+            // 2. I LOVE YOU 模式计时和切换
+            const countdownEl = document.getElementById('text-countdown');
+            if (isMaxExpansion && !isILoveYouMode) {
+                const elapsed = Date.now() - maxExpansionStartTime;
+                const remaining = Math.max(0, CONFIG.textDelayDuration - elapsed);
+                const seconds = (remaining / 1000).toFixed(1);
+                
+                countdownEl.innerText = `聚合倒计时: ${seconds}s`;
+                countdownEl.style.opacity = 1;
+
+                if (elapsed >= CONFIG.textDelayDuration) {
+                    // 触发 I LOVE YOU 模式
+                    isILoveYouMode = true;
+                    // 保存当前的非文字模式
+                    originalMode = targetMode; 
+                    targetMode = 'iloveyou';
+                    handExpansionFactor = 0; // 粒子开始聚合
+                    isMaxExpansion = false;
+                    maxExpansionStartTime = 0;
+                    countdownEl.style.opacity = 0;
+                }
+            } else {
+                countdownEl.style.opacity = 0;
+            }
+
+            // 3. 更新扩散系数 (基于手势)
+            smoothedExpansion += (handExpansionFactor - smoothedExpansion) * 0.1;
+            
+            // 更新UI数值
+            const percent = Math.round(smoothedExpansion * 100);
+            document.getElementById('diffusion-val').innerText = `${percent}%`;
+            document.getElementById('gesture-feedback').style.opacity = percent > 5 ? 1 : 0;
+
+            // 4. 粒子位置更新的核心逻辑
+            updateParticles();
+
+            renderer.render(scene, camera);
+        }
+
+        function updateParticles() {
+            if (!particles) return;
+
+            const positions = particles.geometry.attributes.position.array;
+            let targetPositions;
+            
+            // 根据当前模式选择目标位置数组
+            if (targetMode === 'starfield') {
+                targetPositions = positionsStarfield;
+            } else if (targetMode === 'saturn') {
+                targetPositions = positionsSaturn;
+            } else if (targetMode === 'iloveyou') {
+                targetPositions = positionsILoveYou;
+            }
+
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                const i3 = i * 3;
+
+                // A. 获取目标基础位置
+                const tx = targetPositions[i3];
+                const ty = targetPositions[i3 + 1];
+                const tz = targetPositions[i3 + 2];
+
+                // B. 计算扩散后的位置 (Explosion effect) - 仅在非文字模式下应用
+                let finalTx = tx;
+                let finalTy = ty;
+                let finalTz = tz;
+                
+                if (!isILoveYouMode) {
+                    // 普通模式下的扩张和随机噪点
+                    const noiseX = (Math.random() - 0.5) * 5 * smoothedExpansion;
+                    const noiseY = (Math.random() - 0.5) * 5 * smoothedExpansion;
+                    const noiseZ = (Math.random() - 0.5) * 5 * smoothedExpansion;
+
+                    const expansionMult = 1 + (smoothedExpansion * 3); // 最大放大4倍
+
+                    finalTx = tx * expansionMult + noiseX;
+                    finalTy = ty * expansionMult + noiseY;
+                    finalTz = tz * expansionMult + noiseZ;
+                }
+
+
+                // C. 移动当前粒子向目标位置 (Lerp)
+                positions[i3]     += (finalTx - positions[i3]) * CONFIG.lerpSpeed;
+                positions[i3 + 1] += (finalTy - positions[i3 + 1]) * CONFIG.lerpSpeed;
+                positions[i3 + 2] += (finalTz - positions[i3 + 2]) * CONFIG.lerpSpeed;
+            }
+
+            particles.geometry.attributes.position.needsUpdate = true;
+        }
+
+
+        // --- 4. MediaPipe 手势识别 ---
+        
+        const videoElement = document.querySelector('.input_video');
+        
+        // 辅助函数：计算拇指尖和食指尖的距离，返回扩张因子
+        function getExpansionFactor(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+
+            const distance = Math.sqrt(
+                Math.pow(thumbTip.x - indexTip.x, 2) +
+                Math.pow(thumbTip.y - indexTip.y, 2)
+            );
+
+            const minD = 0.05; // 捏合最小值
+            const maxD = 0.4; // 张开最大值
+            
+            let factor = (distance - minD) / (maxD - minD);
+            return Math.max(0, Math.min(1, factor));
+        }
+
+        function onResults(results) {
+            // 隐藏加载层
+            const loader = document.getElementById('loading');
+            if(loader && loader.style.display !== 'none') {
+                loader.style.opacity = 0;
+                setTimeout(() => loader.style.display = 'none', 500);
+                // 亮起状态灯
+                document.getElementById('hand-status').classList.remove('bg-red-500');
+                document.getElementById('hand-status').classList.add('bg-green-500');
+                document.getElementById('hand-status').style.boxShadow = "0 0 10px rgba(34,197,94,0.8)";
+            }
+
+            const handCount = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+            
+            // --- 旋转控制逻辑 (只基于第一只手) ---
+            if (handCount > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const wristX = landmarks[0].x; 
+
+                if (lastHandX !== null && !isILoveYouMode) { // 文字模式下不旋转，防止模型在聚合时抖动
+                    const deltaX = wristX - lastHandX;
+                    targetRotationY -= deltaX * 5.0; 
+                }
+                lastHandX = wristX;
+
+                // 只有第一只手的扩张因子用于普通模式下的扩散控制
+                const factor = getExpansionFactor(landmarks);
+                handExpansionFactor = factor;
+
+                // --- I LOVE YOU 状态机检测 ---
+                if (!isILoveYouMode) {
+                    if (factor >= CONFIG.maxExpansionThreshold) {
+                        if (!isMaxExpansion) {
+                            // 首次达到最大扩张，开始计时
+                            isMaxExpansion = true;
+                            maxExpansionStartTime = Date.now();
+                        }
+                    } else {
+                        // 扩张中断
+                        isMaxExpansion = false;
+                        maxExpansionStartTime = 0;
+                    }
+                }
+            } else {
+                // 如果手离开了，重置手部X追踪，并慢慢衰减粒子扩张
+                lastHandX = null; 
+                handExpansionFactor = handExpansionFactor * 0.95;
+                isMaxExpansion = false;
+                maxExpansionStartTime = 0;
+            }
+
+            // --- 双手退出文字模式逻辑 (NEW) ---
+            if (isILoveYouMode && handCount >= 2) {
+                // 计算两只手的扩张因子
+                const factor1 = getExpansionFactor(results.multiHandLandmarks[0]);
+                const factor2 = getExpansionFactor(results.multiHandLandmarks[1]);
+
+                // 如果两只手都处于捏合状态 (扩张因子低于阈值)
+                if (factor1 <= CONFIG.exitTextThreshold && factor2 <= CONFIG.exitTextThreshold) {
+                    isILoveYouMode = false;
+                    // 返回到进入文字模式前的模式 (可能是 starfield 或 saturn)
+                    targetMode = originalMode; 
+                    switchMode(targetMode); // 更新 UI
+                }
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2, // 允许双手追踪
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+
+        // 启动摄像头
+        cameraUtils.start().catch(err => {
+            console.error("Camera error:", err);
+            console.error("无法启动摄像头，请确保允许权限。"); 
+            document.querySelector('#loading div:nth-child(2)').innerText = "摄像头启动失败";
+        });
+
+
+        // --- 5. UI 交互逻辑 ---
+
+        // 模式切换
+        window.switchMode = (mode) => {
+            // 在这里仅更新 UI 按钮状态，实际的 targetMode 可能会被手势逻辑覆盖
+            
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('bg-red-500/40', 'bg-purple-500/40', 'border-red-400', 'border-purple-400', 'text-white');
+                btn.classList.add('bg-white/10', 'border-white/5');
+            });
+            
+            if (mode !== 'iloveyou') {
+                targetMode = mode; // 只有非文字模式才允许通过按钮切换
+                
+                const activeBtn = document.getElementById(`btn-${mode}`);
+                activeBtn.classList.remove('bg-white/10', 'border-white/5');
+                
+                if(mode === 'starfield') {
+                    activeBtn.classList.add('bg-red-500/40', 'border-red-400', 'text-white');
+                } else {
+                    activeBtn.classList.add('bg-purple-500/40', 'border-purple-400', 'text-white');
+                }
+            }
+        };
+
+        // 颜色选择器
+        const colorPicker = document.getElementById('colorPicker');
+        const colorValue = document.getElementById('colorValue');
+
+        colorPicker.addEventListener('input', (e) => {
+            const hex = e.target.value;
+            colorValue.innerText = hex.toUpperCase();
+            
+            if(particles) {
+                material.color.set(hex);
+            }
+        });
+
+        // 窗口调整
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 全屏切换 - 增强版逻辑
+        window.toggleFullScreen = () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        };
+
+        // 监听全屏变化更新图标
+        document.addEventListener('fullscreenchange', () => {
+            const isFullScreen = !!document.fullscreenElement;
+            const btn = document.getElementById('fullscreen-btn');
+            const iconEnter = document.getElementById('icon-enter');
+            const iconExit = document.getElementById('icon-exit');
+            
+            if (isFullScreen) {
+                iconEnter.classList.add('hidden');
+                iconExit.classList.remove('hidden');
+                btn.classList.add('bg-red-500/20'); 
+                btn.title = "退出全屏";
+            } else {
+                iconEnter.classList.remove('hidden');
+                iconExit.classList.add('hidden');
+                btn.classList.remove('bg-red-500/20');
+                btn.title = "切换全屏";
+            }
+        });
+
+        // 初始化选中状态
+        switchMode('saturn'); // 默认选中 'saturn' 模式
+        initThree();
+
+    </script>
+</body>
+</html>
